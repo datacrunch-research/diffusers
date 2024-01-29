@@ -1377,6 +1377,8 @@ class StableDiffusionXLImg2ImgPipeline(
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
+            if self.do_classifier_free_guidance:
+                timestep_cond = timestep_cond.repeat(2, 1)
 
         self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
