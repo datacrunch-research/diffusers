@@ -768,7 +768,7 @@ class UNet2DConditionLoadersMixin:
         image_projection.load_state_dict(updated_state_dict)
         return image_projection
 
-    def _convert_ip_adapter_attn_to_diffusers(self, state_dicts):
+    def _convert_ip_adapter_attn_to_diffusers(self, state_dicts, low_cpu_mem_usage=False, target_blocks=['block']):
         from ..models.attention_processor import (
             AttnProcessor,
             AttnProcessor2_0,
@@ -811,12 +811,21 @@ class UNet2DConditionLoadersMixin:
                         # IP-Adapter Plus
                         num_image_text_embeds += [state_dict["image_proj"]["latents"].shape[1]]
 
-                attn_procs[name] = attn_processor_class(
-                    hidden_size=hidden_size,
-                    cross_attention_dim=cross_attention_dim,
-                    scale=1.0,
-                    num_tokens=num_image_text_embeds,
-                ).to(dtype=self.dtype, device=self.device)
+                with init_context():
+
+                    selected = False
+                    for block_name in target_blocks:
+                        if block_name in name:
+                            selected = True
+                            break
+                    
+                    attn_procs[name] = attn_processor_class(
+                        hidden_size=hidden_size,
+                        cross_attention_dim=cross_attention_dim,
+                        scale=1.0,
+                        num_tokens=num_image_text_embeds,
+                        skip=not selected
+                    )
 
                 value_dict = {}
                 for i, state_dict in enumerate(state_dicts):
@@ -828,14 +837,14 @@ class UNet2DConditionLoadersMixin:
 
         return attn_procs
 
-    def _load_ip_adapter_weights(self, state_dicts):
+    def _load_ip_adapter_weights(self, state_dicts, low_cpu_mem_usage=False, target_blocks=["block"]):
         if not isinstance(state_dicts, list):
             state_dicts = [state_dicts]
         # Set encoder_hid_proj after loading ip_adapter weights,
         # because `IPAdapterPlusImageProjection` also has `attn_processors`.
         self.encoder_hid_proj = None
 
-        attn_procs = self._convert_ip_adapter_attn_to_diffusers(state_dicts)
+        attn_procs = self._convert_ip_adapter_attn_to_diffusers(state_dicts, low_cpu_mem_usage=low_cpu_mem_usage, target_blocks=target_blocks)
         self.set_attn_processor(attn_procs)
 
         # convert IP-Adapter Image Projection layers to diffusers
