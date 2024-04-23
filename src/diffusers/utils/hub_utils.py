@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 The HuggingFace Inc. team.
+# Copyright 2024 The HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -112,7 +112,8 @@ def load_or_create_model_card(
         repo_id_or_path (`str`):
             The repo id (e.g., "runwayml/stable-diffusion-v1-5") or local path where to look for the model card.
         token (`str`, *optional*):
-            Authentication token. Will default to the stored token. See https://huggingface.co/settings/token for more details.
+            Authentication token. Will default to the stored token. See https://huggingface.co/settings/token for more
+            details.
         is_pipeline (`bool`):
             Boolean to indicate if we're adding tag to a [`DiffusionPipeline`].
         from_training: (`bool`): Boolean flag to denote if the model card is being created from a training script.
