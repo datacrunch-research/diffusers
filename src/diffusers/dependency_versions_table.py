@@ -3,7 +3,7 @@
 # 2. run `make deps_table_update`
 deps = {
     "Pillow": "Pillow",
-    "accelerate": "accelerate>=0.11.0",
+    "accelerate": "accelerate>=0.29.3",
     "compel": "compel==0.1.8",
     "datasets": "datasets",
     "filelock": "filelock",
@@ -38,8 +38,9 @@ deps = {
     "regex": "regex!=2019.12.17",
     "requests": "requests",
     "tensorboard": "tensorboard",
-    "torch": "torch>=1.4,<2.2.0",
-    "torchvision": "torchvision<0.17",
+    "torch": "torch>=1.4",
+    "torchvision": "torchvision",
     "transformers": "transformers>=4.25.1",
     "urllib3": "urllib3<=2.0.0",
+    "black": "black",
 }
