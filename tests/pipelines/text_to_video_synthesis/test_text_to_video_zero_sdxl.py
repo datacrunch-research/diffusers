@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 HuggingFace Inc.
+# Copyright 2024 HuggingFace Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import contextlib
+import gc
 import inspect
 import io
 import re
@@ -29,7 +30,7 @@ from diffusers.utils.import_utils import is_accelerate_available, is_accelerate_
 from diffusers.utils.testing_utils import enable_full_determinism, nightly, require_torch_gpu, torch_device
 
 from ..pipeline_params import TEXT_TO_IMAGE_BATCH_PARAMS, TEXT_TO_IMAGE_IMAGE_PARAMS, TEXT_TO_IMAGE_PARAMS
-from ..test_pipelines_common import PipelineTesterMixin
+from ..test_pipelines_common import PipelineFromPipeTesterMixin, PipelineTesterMixin
 
 
 enable_full_determinism()
@@ -42,7 +43,7 @@ def to_np(tensor):
     return tensor
 
 
-class TextToVideoZeroSDXLPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
+class TextToVideoZeroSDXLPipelineFastTests(PipelineTesterMixin, PipelineFromPipeTesterMixin, unittest.TestCase):
     pipeline_class = TextToVideoZeroSDXLPipeline
     params = TEXT_TO_IMAGE_PARAMS
     batch_params = TEXT_TO_IMAGE_BATCH_PARAMS
@@ -167,8 +168,12 @@ class TextToVideoZeroSDXLPipelineFastTests(PipelineTesterMixin, unittest.TestCas
         first_frame_slice = result[0, -3:, -3:, -1]
         last_frame_slice = result[-1, -3:, -3:, 0]
 
-        expected_slice1 = np.array([0.48, 0.58, 0.53, 0.59, 0.50, 0.44, 0.60, 0.65, 0.52])
-        expected_slice2 = np.array([0.66, 0.49, 0.40, 0.70, 0.47, 0.51, 0.73, 0.65, 0.52])
+        expected_slice1 = np.array(
+            [0.6008109, 0.73051643, 0.51778656, 0.55817354, 0.45222935, 0.45998418, 0.57017255, 0.54874814, 0.47078788]
+        )
+        expected_slice2 = np.array(
+            [0.6011751, 0.47420046, 0.41660714, 0.6472957, 0.41261768, 0.5438129, 0.7401535, 0.6756011, 0.53652245]
+        )
 
         assert np.abs(first_frame_slice.flatten() - expected_slice1).max() < 1e-2
         assert np.abs(last_frame_slice.flatten() - expected_slice2).max() < 1e-2
@@ -381,6 +386,18 @@ class TextToVideoZeroSDXLPipelineFastTests(PipelineTesterMixin, unittest.TestCas
 @nightly
 @require_torch_gpu
 class TextToVideoZeroSDXLPipelineSlowTests(unittest.TestCase):
+    def setUp(self):
+        # clean up the VRAM before each test
+        super().setUp()
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def tearDown(self):
+        # clean up the VRAM after each test
+        super().tearDown()
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def test_full_model(self):
         model_id = "stabilityai/stable-diffusion-xl-base-1.0"
         pipe = TextToVideoZeroSDXLPipeline.from_pretrained(

@@ -1,4 +1,4 @@
-<!--Copyright 2023 The HuggingFace Team. All rights reserved.
+<!--Copyright 2024 The HuggingFace Team. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 the License. You may obtain a copy of the License at
@@ -256,7 +256,7 @@ make_image_grid([init_image, mask_image, output], rows=1, cols=3)
 
 ## Guess mode
 
-[Guess mode](https://github.com/lllyasviel/ControlNet/discussions/188) does not require supplying a prompt to a ControlNet at all! This forces the ControlNet encoder to do it's best to "guess" the contents of the input control map (depth map, pose estimation, canny edge, etc.).
+[Guess mode](https://github.com/lllyasviel/ControlNet/discussions/188) does not require supplying a prompt to a ControlNet at all! This forces the ControlNet encoder to do its best to "guess" the contents of the input control map (depth map, pose estimation, canny edge, etc.).
 
 Guess mode adjusts the scale of the output residuals from a ControlNet by a fixed ratio depending on the block depth. The shallowest `DownBlock` corresponds to 0.1, and as the blocks get deeper, the scale increases exponentially such that the scale of the `MidBlock` output becomes 1.0.
 
@@ -429,6 +429,27 @@ image = pipe(
 make_image_grid([original_image, canny_image, image], rows=1, cols=3)
 ```
 
+<Tip>
+
+You can use a refiner model with `StableDiffusionXLControlNetPipeline` to improve image quality, just like you can with a regular `StableDiffusionXLPipeline`.
+See the [Refine image quality](./sdxl#refine-image-quality) section to learn how to use the refiner model.
+Make sure to use `StableDiffusionXLControlNetPipeline` and pass `image` and `controlnet_conditioning_scale`.
+
+```py
+base = StableDiffusionXLControlNetPipeline(...)
+image = base(
+    prompt=prompt,
+    controlnet_conditioning_scale=0.5,
+    image=canny_image,
+    num_inference_steps=40,
+    denoising_end=0.8,
+    output_type="latent",
+).images
+# rest exactly as with StableDiffusionXLPipeline
+```
+
+</Tip>
+
 ## MultiControlNet
 
 <Tip>
@@ -485,7 +506,7 @@ make_image_grid([original_image, canny_image], rows=1, cols=2)
 </div>
 
 For human pose estimation, install [controlnet_aux](https://github.com/patrickvonplaten/controlnet_aux):
-  
+
 ```py
 # uncomment to install the necessary library in Colab
 #!pip install -q controlnet-aux
