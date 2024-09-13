@@ -716,6 +716,11 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin):
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
+                # added dynamic shapes
+                torch._dynamo.mark_dynamic(latents, 1)
+                torch._dynamo.mark_dynamic(prompt_embeds, 1)
+                torch._dynamo.mark_dynamic(latent_image_ids, 0)
+
                 noise_pred = self.transformer(
                     hidden_states=latents,
                     timestep=timestep / 1000,
