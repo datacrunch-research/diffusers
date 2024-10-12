@@ -542,6 +542,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin):
         latents: Optional[torch.FloatTensor] = None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
+        lora_scale: Optional[float] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -648,9 +649,8 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin):
 
         device = self._execution_device
 
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
-        )
+        lora_scale = torch.tensor(lora_scale, dtype=torch.bfloat16)
+        torch._dynamo.mark_dynamic(lora_scale, 0)
         (
             prompt_embeds,
             pooled_prompt_embeds,
@@ -720,7 +720,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin):
                 torch._dynamo.mark_dynamic(latents, 1)
                 torch._dynamo.mark_dynamic(prompt_embeds, 1)
                 torch._dynamo.mark_dynamic(latent_image_ids, 0)
-
+                torch.compiler.cudagraph_mark_step_begin()
                 noise_pred = self.transformer(
                     hidden_states=latents,
                     timestep=timestep / 1000,
@@ -729,6 +729,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin):
                     encoder_hidden_states=prompt_embeds,
                     txt_ids=text_ids,
                     img_ids=latent_image_ids,
+                    lora_scale=lora_scale,
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
                 )[0]

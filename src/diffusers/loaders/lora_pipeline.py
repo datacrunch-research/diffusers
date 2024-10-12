@@ -14,6 +14,8 @@
 import os
 from typing import Callable, Dict, List, Optional, Union
 
+import collections
+
 import torch
 from huggingface_hub.utils import validate_hf_hub_args
 
@@ -64,6 +66,54 @@ TRANSFORMER_NAME = "transformer"
 
 LORA_WEIGHT_NAME = "pytorch_lora_weights.bin"
 LORA_WEIGHT_NAME_SAFE = "pytorch_lora_weights.safetensors"
+
+
+def pad_lora_weights(state_dict, target_rank):
+    """
+    Pad LoRA weights in a state dict to a target rank while preserving the original behavior.
+    
+    Args:
+        state_dict (dict): The state dict containing LoRA weights
+        target_rank (int): The target rank to pad to
+    Returns:
+        new_state_dict: A new state dict with padded LoRA weights
+    """
+    new_state_dict = {}
+    for key, weight in state_dict.items():
+        if "lora_A" in key or "lora_B" in key:
+            is_conv = weight.dim() == 4
+            
+            if "lora_A" in key:
+                original_rank = weight.size(0)
+                if original_rank >= target_rank:
+                    new_state_dict[key] = weight
+                    continue
+                
+                if is_conv:
+                    padded = torch.zeros(target_rank, weight.size(1), weight.size(2), weight.size(3),
+                                         device=weight.device, dtype=weight.dtype)
+                    padded[:original_rank, :, :, :] = weight
+                else:
+                    padded = torch.zeros(target_rank, weight.size(1), device=weight.device, dtype=weight.dtype)
+                    padded[:original_rank, :] = weight
+            
+            elif "lora_B" in key:
+                original_rank = weight.size(1)
+                if original_rank >= target_rank:
+                    new_state_dict[key] = weight
+                    continue
+                
+                if is_conv:
+                    padded = torch.zeros(weight.size(0), target_rank, weight.size(2), weight.size(3),
+                                         device=weight.device, dtype=weight.dtype)
+                    padded[:, :original_rank, :, :] = weight
+                else:
+                    padded = torch.zeros(weight.size(0), target_rank, device=weight.device, dtype=weight.dtype)
+                    padded[:, :original_rank] = weight
+            new_state_dict[key] = padded
+        else:
+            new_state_dict[key] = weight
+    return new_state_dict
 
 
 class StableDiffusionLoraLoaderMixin(LoraBaseMixin):
@@ -1781,7 +1831,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             return state_dict
 
     def load_lora_weights(
-        self, pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]], adapter_name=None, **kwargs
+        self, pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]], adapter_name=None, hotswap: bool = False, **kwargs
     ):
         """
         Load LoRA weights specified in `pretrained_model_name_or_path_or_dict` into `self.transformer` and
@@ -1834,6 +1884,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             adapter_name=adapter_name,
             _pipeline=self,
             low_cpu_mem_usage=low_cpu_mem_usage,
+            hotswap=hotswap,
         )
 
         text_encoder_state_dict = {k: v for k, v in state_dict.items() if "text_encoder." in k}
@@ -1851,7 +1902,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
 
     @classmethod
     def load_lora_into_transformer(
-        cls, state_dict, network_alphas, transformer, adapter_name=None, _pipeline=None, low_cpu_mem_usage=False
+        cls, state_dict, network_alphas, transformer, adapter_name=None, _pipeline=None, low_cpu_mem_usage=False, hotswap: bool = False
     ):
         """
         This will load the LoRA layers specified in `state_dict` into `transformer`.
@@ -1876,7 +1927,6 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
             )
-
         from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
 
         keys = list(state_dict.keys())
@@ -1892,10 +1942,13 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             if "lora_A" not in first_key:
                 state_dict = convert_unet_state_dict_to_peft(state_dict)
 
-            if adapter_name in getattr(transformer, "peft_config", {}):
+            state_dict = pad_lora_weights(state_dict, 128)
+            if adapter_name in getattr(transformer, "peft_config", {}) and not hotswap:
                 raise ValueError(
                     f"Adapter name {adapter_name} already in use in the transformer - please select a new adapter name."
                 )
+            elif adapter_name not in getattr(transformer, "peft_config", {}) and hotswap:
+                raise ValueError(f"Trying to hotswap LoRA adapter '{adapter_name}' but there is no existing adapter by that name.")
 
             rank = {}
             for key, val in state_dict.items():
@@ -1924,13 +1977,106 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
             is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
-
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
                 peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
 
-            inject_adapter_in_model(lora_config, transformer, adapter_name=adapter_name, **peft_kwargs)
-            incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
+            def _check_hotswap_configs_compatible(config0, config1):
+                # TODO: This is a very rough check at the moment and there are probably better ways than to error out
+                config_keys_to_check = ["use_rslora", "lora_dropout", "alpha_pattern", "use_dora"]
+                config0 = config0.to_dict()
+                config1 = config1.to_dict()
+                for key in config_keys_to_check:
+                    val0 = config0[key]
+                    val1 = config1[key]
+                    if val0 != val1:
+                        raise ValueError(f"Configs are incompatible: for {key}, {val0} != {val1}")
+            
+            def _update_scaling(model, adapter_name, scaling_factor=None):
+                target_modules = model.peft_config[adapter_name].target_modules
+                for name, module in model.named_modules():
+                    if any(target in name for target in target_modules):
+                        if hasattr(module, 'scaling'):
+                            lora_module = module
+                        elif hasattr(module, '0') and hasattr(module[0], 'scaling'):
+                            lora_module = module[0]
+                        else:
+                            continue
+                        
+                        if not isinstance(lora_module.scaling[adapter_name], torch.Tensor):
+                            lora_module.scaling[adapter_name] = torch.tensor(scaling_factor, device=lora_module.weight.device)
+                        else:
+                            lora_module.scaling[adapter_name].fill_(scaling_factor)
+            
+            def _hotswap_state_dict(model, state_dict, adapter_name):
+                from operator import attrgetter
+
+                #######################
+                # INSERT ADAPTER NAME #
+                #######################
+
+                remapped_state_dict = {}
+                expected_str = adapter_name + "."
+                for key, val in state_dict.items():
+                    if expected_str not in key:
+                        prefix, _, suffix = key.rpartition(".")
+                        key = f"{prefix}.{adapter_name}.{suffix}"
+                    remapped_state_dict[key] = val
+                state_dict = remapped_state_dict
+
+                ####################
+                # CHECK STATE_DICT #
+                ####################
+
+                # Ensure that all the keys of the new adapter correspond exactly to the keys of the old adapter, otherwise
+                # hot-swapping is not possible
+                parameter_prefix = "lora_"  # hard-coded for now
+                is_compiled = hasattr(model, "_orig_mod")
+                # TODO: there is probably a more precise way to identify the adapter keys
+                missing_keys = {k for k in model.state_dict() if (parameter_prefix in k) and (adapter_name in k)}
+                unexpected_keys = set()
+
+                # first: dry run, not swapping anything
+                for key, new_val in state_dict.items():
+                    try:
+                        old_val = attrgetter(key)(model)
+                    except AttributeError:
+                        unexpected_keys.add(key)
+                        continue
+
+                    if is_compiled:
+                        missing_keys.remove("_orig_mod." + key)
+                    else:
+                        missing_keys.remove(key)
+
+                if missing_keys or unexpected_keys:
+                    msg = "Hot swapping the adapter did not succeed."
+                    if missing_keys:
+                        msg += f" Missing keys: {', '.join(sorted(missing_keys))}."
+                    if unexpected_keys:
+                        msg += f" Unexpected keys: {', '.join(sorted(unexpected_keys))}."
+                    raise RuntimeError(msg)
+
+                ###################
+                # ACTUAL SWAPPING #
+                ###################
+
+                for key, new_val in state_dict.items():
+                    old_val = attrgetter(key)(model)
+                    old_val.data.copy_(new_val.data.to(device=old_val.device))
+
+            if hotswap:
+                import pdb; pdb.set_trace()
+                _check_hotswap_configs_compatible(transformer.peft_config[adapter_name], lora_config)
+                new_scaling_factor = transformer.peft_config[adapter_name].lora_alpha / transformer.peft_config[adapter_name].r
+                _update_scaling(transformer, adapter_name, new_scaling_factor)
+                _hotswap_state_dict(transformer, state_dict, adapter_name)
+                incompatible_keys = None
+            else:
+                inject_adapter_in_model(lora_config, transformer, adapter_name=adapter_name, **peft_kwargs)
+                incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
+                new_scaling_factor = transformer.peft_config[adapter_name].lora_alpha / transformer.peft_config[adapter_name].r
+                _update_scaling(transformer, adapter_name, new_scaling_factor)
 
             if incompatible_keys is not None:
                 # check only for unexpected keys
