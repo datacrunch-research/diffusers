@@ -720,7 +720,6 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleFileMixin):
                 torch._dynamo.mark_dynamic(latents, 1)
                 torch._dynamo.mark_dynamic(prompt_embeds, 1)
                 torch._dynamo.mark_dynamic(latent_image_ids, 0)
-                torch.compiler.cudagraph_mark_step_begin()
                 noise_pred = self.transformer(
                     hidden_states=latents,
                     timestep=timestep / 1000,
