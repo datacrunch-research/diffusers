@@ -2066,7 +2066,6 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
                     old_val.data.copy_(new_val.data.to(device=old_val.device))
 
             if hotswap:
-                import pdb; pdb.set_trace()
                 _check_hotswap_configs_compatible(transformer.peft_config[adapter_name], lora_config)
                 new_scaling_factor = transformer.peft_config[adapter_name].lora_alpha / transformer.peft_config[adapter_name].r
                 _update_scaling(transformer, adapter_name, new_scaling_factor)
