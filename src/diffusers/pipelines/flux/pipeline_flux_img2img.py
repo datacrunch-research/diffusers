@@ -589,6 +589,7 @@ class FluxImg2ImgPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
+        lora_scale: Optional[float] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
@@ -789,6 +790,9 @@ class FluxImg2ImgPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                torch._dynamo.mark_dynamic(latents, 1)
+                torch._dynamo.mark_dynamic(prompt_embeds, 1)
+                torch._dynamo.mark_dynamic(latent_image_ids, 0)
                 noise_pred = self.transformer(
                     hidden_states=latents,
                     timestep=timestep / 1000,
@@ -797,6 +801,7 @@ class FluxImg2ImgPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     encoder_hidden_states=prompt_embeds,
                     txt_ids=text_ids,
                     img_ids=latent_image_ids,
+                    lora_scale=lora_scale,
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
                 )[0]
@@ -831,8 +836,10 @@ class FluxImg2ImgPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         else:
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
-            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
-            image = self.vae.decode(latents, return_dict=False)[0]
+            latents_final = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+            torch._dynamo.mark_dynamic(latents_final, 2)
+            torch._dynamo.mark_dynamic(latents_final, 3)
+            image = self.vae.decode(latents_final, return_dict=False)[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
