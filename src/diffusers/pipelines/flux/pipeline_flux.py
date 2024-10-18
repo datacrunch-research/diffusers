@@ -693,6 +693,11 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 else:
                     guidance = None
 
+                # added dynamic shapes
+                torch._dynamo.mark_dynamic(latents, 1)
+                torch._dynamo.mark_dynamic(prompt_embeds, 1)
+                torch._dynamo.mark_dynamic(latent_image_ids, 0)
+
                 noise_pred = self.transformer(
                     hidden_states=latents,
                     # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
@@ -736,8 +741,10 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         else:
             latents = self._unpack_latents(latents, height, width, self.vae_scale_factor)
-            latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
-            image = self.vae.decode(latents, return_dict=False)[0]
+            latents_final = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+            torch._dynamo.mark_dynamic(latents_final, 2)
+            torch._dynamo.mark_dynamic(latents_final, 3)
+            image = self.vae.decode(latents_final, return_dict=False)[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
